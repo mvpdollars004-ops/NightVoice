@@ -76,8 +76,9 @@ struct ContentView: View {
                 Form {
                     Section("Listening") {
                         VStack(alignment: .leading) {
-                            Text("Response cooldown: \(Int(speech.cooldownSeconds)) seconds")
-                            Slider(value: $speech.cooldownSeconds, in: 2...15, step: 1)
+                            Text("Response delay: random 3–15 seconds after each question")
+                            Text("Listening resumes immediately after each spoken answer.")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading) {
                             Text("End-of-question silence: \(speech.silenceSeconds, specifier: "%.1f") seconds")
