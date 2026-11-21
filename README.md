@@ -16,3 +16,9 @@ Unverified SwiftUI iOS source and Codemagic unsigned IPA workflow. This is **not
 - Voice output is synthesized without radio effects; session history is not persistent.
 - The interface does not show an AI label, but source metadata is retained in logs. Responses are simulated, not evidence of spirits.
 - Codemagic plan/build-minute availability and Sideloadly signing requirements may apply.
+
+
+## v0.6 build fixes
+- Simplified the waveform expression in NIGHTVOICE/ContentView.swift to avoid SwiftUI type-check timeout.
+- Removed invalid empty publishing.email configuration from codemagic.yaml.
+- This source has not been compiled on macOS; further compiler errors may appear.

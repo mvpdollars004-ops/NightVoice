@@ -24,4 +24,3 @@ workflows:
           zip -qry NIGHTVOICE-unsigned.ipa Payload
     artifacts:
       - NIGHTVOICE-unsigned.ipa
-  
