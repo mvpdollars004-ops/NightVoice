@@ -3,7 +3,7 @@ import Speech
 import AVFoundation
 
 @MainActor
-final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+final class SpeechController: NSObject, ObservableObject {
     @Published var transcript = ""
     @Published var status = "Ready"
     @Published var armed = false
@@ -16,10 +16,16 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     @Published var serverURL: String = UserDefaults.standard.string(forKey: "nightvoice.serverURL") ?? ""
     @Published var lastSource: String = ""
     @Published var pendingDelay: Int? = nil
+    @Published var voiceMode: String = "AUTO" {
+        didSet { hauntedVoice.character = HauntedVoice.Character(rawValue: voiceMode) ?? .automatic }
+    }
+    @Published var reverbAmount: Double = 47 {
+        didSet { hauntedVoice.wetDryMix = Float(reverbAmount) }
+    }
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let audioEngine = AVAudioEngine()
-    private let synthesizer = AVSpeechSynthesizer()
+    private let hauntedVoice = HauntedVoice()
     private let responseEngine = ResponseEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -37,7 +43,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
 
     override init() {
         super.init()
-        synthesizer.delegate = self
+
     }
 
     func arm() async {
@@ -79,7 +85,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         speechRecoveryTask?.cancel()
         engineRecoveryTask?.cancel()
         pendingDelay = nil
-        synthesizer.stopSpeaking(at: .immediate)
+        hauntedVoice.stop()
         stopRecognition()
         processing = false
         status = "Disarmed"
@@ -99,7 +105,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         engineRecoveryTask?.cancel()
         pendingDelay = nil
         stopRecognition()
-        synthesizer.stopSpeaking(at: .immediate)
+        hauntedVoice.stop()
         processing = false
         status = "Paused"
     }
@@ -116,7 +122,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     }
 
     private func beginListening() async {
-        guard armed && !paused && !processing && !listening && !synthesizer.isSpeaking else { return }
+        guard armed && !paused && !processing && !listening && !hauntedVoice.isSpeaking else { return }
         guard let recognizer, recognizer.isAvailable else {
             status = "Recognition unavailable; retrying"
             scheduleRestart(after: 2)
@@ -242,26 +248,34 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         reply = limited
         history.insert("\(Date().formatted(date: .omitted, time: .standard)) | Q: \(question) | A: \(limited) [\(result.source)]", at: 0)
         status = "Responding"
-        let utterance = AVSpeechUtterance(string: limited)
-        utterance.rate = 0.42
-        utterance.pitchMultiplier = 0.72
-        synthesizer.speak(utterance)
-        // AVSpeechSynthesizer completion callbacks are not guaranteed in every
-        // interruption/audio-route situation. Never let one missing callback
-        // permanently block the microphone.
+        hauntedVoice.speak(limited) { [weak self] in
+            guard let self else { return }
+            self.speechRecoveryTask?.cancel()
+            self.processing = false
+            if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
+        }
+        // Independent recovery in case audio callbacks are interrupted.
         speechRecoveryTask?.cancel()
         speechRecoveryTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
+            try? await Task.sleep(for: .seconds(12))
             guard !Task.isCancelled, let self, self.armed, !self.paused,
                   self.sessionID == session else { return }
             if self.processing {
-                if self.synthesizer.isSpeaking {
-                    self.synthesizer.stopSpeaking(at: .immediate)
-                }
+                self.hauntedVoice.stop()
                 self.processing = false
-                if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
+                self.scheduleRestart(after: 0.4)
             }
         }
+    }
+
+    var voiceCharacter: HauntedVoice.Character {
+        get { hauntedVoice.character }
+        set { hauntedVoice.character = newValue }
+    }
+
+    var reverbMix: Float {
+        get { hauntedVoice.wetDryMix }
+        set { hauntedVoice.wetDryMix = newValue }
     }
 
     func answerCurrentQuestion() async {
@@ -276,30 +290,12 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             responseTask?.cancel()
             pendingDelay = nil
             let question = transcript
-            guard !question.isEmpty && !synthesizer.isSpeaking else { return }
+            guard !question.isEmpty && !hauntedVoice.isSpeaking else { return }
             await deliverResponse(for: question, normalized: question.lowercased(), session: sessionID)
         } else if looksLikeQuestion(transcript) {
             queueQuestion(transcript)
         } else {
             status = "Ask a question first"
-        }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.speechRecoveryTask?.cancel()
-            self.processing = false
-            if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
-        }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.speechRecoveryTask?.cancel()
-            self.processing = false
-            if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
         }
     }
 
@@ -313,7 +309,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
                       self.sessionID == currentSession else { return }
                 // When no response is pending, no speech is playing, and
                 // recognition has stopped, re-arm the recognizer.
-                if !self.processing && !self.listening && !self.synthesizer.isSpeaking {
+                if !self.processing && !self.listening && !self.hauntedVoice.isSpeaking {
                     self.scheduleRestart(after: 0.2)
                 }
             }

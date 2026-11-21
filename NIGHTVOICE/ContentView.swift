@@ -101,6 +101,19 @@ struct ContentView: View {
                             Slider(value: $speech.silenceSeconds, in: 1...3, step: 0.2)
                         }
                     }
+                    Section("Haunted voice") {
+                        Picker("Voice character", selection: $speech.voiceMode) {
+                            Text("Automatic").tag("AUTO")
+                            Text("Male").tag("MALE")
+                            Text("Female").tag("FEMALE")
+                        }
+                        VStack(alignment: .leading) {
+                            Text("Reverb: \(Int(speech.reverbAmount))%")
+                            Slider(value: $speech.reverbAmount, in: 0...85, step: 5)
+                        }
+                        Text("Automatic randomly chooses a masculine or feminine available iOS voice for each reply. Reverb is applied to the generated audio.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Section("Optional online response service") {
                         TextField("https://your-server.example", text: $serverDraft)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
