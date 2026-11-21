@@ -5,6 +5,11 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var serverDraft = ""
 
+    private func waveformHeight(for index: Int) -> CGFloat {
+        let value = (index * 17 + index * index * 7) % 35
+        return CGFloat(6 + value)
+    }
+
     var body: some View {
         ZStack {
             Color(red: 0.045, green: 0.045, blue: 0.055).ignoresSafeArea()
@@ -33,7 +38,9 @@ struct ContentView: View {
                                 .minimumScaleFactor(0.5).lineLimit(1).frame(minHeight: 80)
                             HStack(alignment: .center, spacing: 3) {
                                 ForEach(0..<45, id: \.self) { i in
-                                    Capsule().fill(Color.red.opacity(0.65)).frame(width: 3, height: CGFloat(6 + ((i * 17 + i * i * 7) % 35)))
+                                    Capsule()
+                                        .fill(Color.red.opacity(0.65))
+                                        .frame(width: 3, height: waveformHeight(for: i))
                                 }
                             }.frame(height: 45)
                         }.padding(18)
