@@ -24,8 +24,4 @@ workflows:
           zip -qry NIGHTVOICE-unsigned.ipa Payload
     artifacts:
       - NIGHTVOICE-unsigned.ipa
-    publishing:
-      email:
-        notify:
-          success: false
-          failure: false
+  
