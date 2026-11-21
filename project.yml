@@ -1,0 +1,25 @@
+name: NIGHTVOICE
+options:
+  bundleIdPrefix: com.blackrosesociety
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+    SWIFT_VERSION: '5.0'
+targets:
+  NIGHTVOICE:
+    type: application
+    platform: iOS
+    sources:
+      - path: NIGHTVOICE
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.blackrosesociety.nightvoice
+        TARGETED_DEVICE_FAMILY: '1'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: NIGHTVOICE
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: NIGHTVOICE listens for investigator questions while a session is armed.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: NIGHTVOICE transcribes investigator questions for short spoken responses.
+        CODE_SIGNING_ALLOWED: NO
+        SUPPORTS_MACCATALYST: NO
+    scheme:
+      testTargets: []
