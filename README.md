@@ -1,24 +1,19 @@
-# NIGHTVOICE v0.5 — Codemagic build package
+# NIGHTVOICE v0.8 — Recovery Patch
 
-Unverified SwiftUI iOS source and Codemagic unsigned IPA workflow. This is **not yet a compiled IPA**.
+This is the complete v0.7 project with a watchdog-based recovery patch in `NIGHTVOICE/SpeechController.swift`.
 
-## Codemagic setup
-1. Extract ZIP; preserve the top-level `codemagic.yaml`, `project.yml`, `NIGHTVOICE/`, and `server/`.
-2. In Codemagic, use your existing repository-connected app or a repository Codemagic can access. Upload/commit these files to the repository root (not inside an extra folder). Codemagic generally builds from a connected repository; the ZIP is not itself an installable app.
-3. Select **NIGHTVOICE - unsigned IPA for Sideloadly**, then **Start new build**.
-4. If successful, download the `NIGHTVOICE-unsigned.ipa` artifact and use Sideloadly to sign/install it on your iPhone.
-5. Grant microphone and speech-recognition permission. Use the app in the foreground.
+## Changes
+- Recovery timer releases the response lock if speech completion is not received within 8 seconds.
+- Independent monitor checks every 4 seconds and restarts recognition when unexpectedly idle.
+- Keeps random 3–15 second question-to-response delay.
+- Stops recovery timers when disarmed; session identifiers prevent stale callbacks from restarting a new session.
 
-## Current limitations
-- Build and on-device operation have not been verified.
-- The offline engine uses rules, not a local AI model.
-- Cloud AI requires a separately hosted, secured HTTPS endpoint; the sample server is a development example, not production-hardened.
-- Voice output is synthesized without radio effects; session history is not persistent.
-- The interface does not show an AI label, but source metadata is retained in logs. Responses are simulated, not evidence of spirits.
-- Codemagic plan/build-minute availability and Sideloadly signing requirements may apply.
+## Installation
+Replace the corresponding project files in your repository, commit to `main`, and rebuild with Codemagic. If the app still stops, note the status text displayed on the app immediately after its first response. That status will help distinguish microphone permission, speech recognition, and audio-session failures.
+
+Not compiled or device-tested in this environment. This patch is a reliability improvement, not a guarantee of uninterrupted recognition. Speech recognition may still be unavailable during interruptions or background execution.
 
 
-## v0.6 build fixes
-- Simplified the waveform expression in NIGHTVOICE/ContentView.swift to avoid SwiftUI type-check timeout.
-- Removed invalid empty publishing.email configuration from codemagic.yaml.
-- This source has not been compiled on macOS; further compiler errors may appear.
+## v0.9: Pause listening
+
+A PAUSE LISTENING button suspends microphone recognition, cancels any pending 3–15 second response, stops speaking, and prevents automatic restarts. RESUME LISTENING begins a fresh recognition session without disarming. DISARM still ends the session. Replace the complete source package in your repository, retaining the `NIGHTVOICE/` directory and root-level `codemagic.yaml` and `project.yml`. This package has not been compiled on macOS.
