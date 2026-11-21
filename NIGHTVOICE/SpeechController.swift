@@ -8,6 +8,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     @Published var status = "Ready"
     @Published var armed = false
     @Published var listening = false
+    @Published private(set) var paused = false
     @Published var reply = "—"
     @Published var history: [String] = []
     @Published var cooldownSeconds: Double = 3 // Legacy setting; random response delay is 3–15 seconds.
@@ -26,6 +27,8 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     private var restartTask: Task<Void, Never>?
     private var responseTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
+    private var speechRecoveryTask: Task<Void, Never>?
+    private var engineRecoveryTask: Task<Void, Never>?
     private var processing = false
     private var sessionID = UUID()
     private var recognitionID = UUID()
@@ -51,10 +54,12 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             status = "Offline recognition unavailable for en-US"; return
         }
         armed = true
+        paused = false
         processing = false
         sessionID = UUID()
         lastAnsweredQuestion = ""
         lastAnswerTime = .distantPast
+        startEngineRecoveryMonitor()
         await beginListening()
     }
 
@@ -65,11 +70,14 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
 
     func disarm() {
         armed = false
+        paused = false
         sessionID = UUID()
         silenceTask?.cancel()
         restartTask?.cancel()
         responseTask?.cancel()
         watchdogTask?.cancel()
+        speechRecoveryTask?.cancel()
+        engineRecoveryTask?.cancel()
         pendingDelay = nil
         synthesizer.stopSpeaking(at: .immediate)
         stopRecognition()
@@ -77,8 +85,38 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         status = "Disarmed"
     }
 
+    func pause() {
+        guard armed && !paused else { return }
+        paused = true
+        // Invalidate any queued reply and prevent stale speech callbacks
+        // from rearming recognition while investigators are talking.
+        sessionID = UUID()
+        silenceTask?.cancel()
+        restartTask?.cancel()
+        responseTask?.cancel()
+        watchdogTask?.cancel()
+        speechRecoveryTask?.cancel()
+        engineRecoveryTask?.cancel()
+        pendingDelay = nil
+        stopRecognition()
+        synthesizer.stopSpeaking(at: .immediate)
+        processing = false
+        status = "Paused"
+    }
+
+    func resume() async {
+        guard armed && paused else { return }
+        paused = false
+        processing = false
+        transcript = ""
+        sessionID = UUID()
+        status = "Resuming"
+        startEngineRecoveryMonitor()
+        await beginListening()
+    }
+
     private func beginListening() async {
-        guard armed && !processing && !listening && !synthesizer.isSpeaking else { return }
+        guard armed && !paused && !processing && !listening && !synthesizer.isSpeaking else { return }
         guard let recognizer, recognizer.isAvailable else {
             status = "Recognition unavailable; retrying"
             scheduleRestart(after: 2)
@@ -106,7 +144,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             recognitionID = id
             recognitionTask = recognizer.recognitionTask(with: newRequest) { [weak self] result, error in
                 Task { @MainActor [weak self] in
-                    guard let self, self.armed, self.recognitionID == id else { return }
+                    guard let self, self.armed, !self.paused, self.recognitionID == id else { return }
                     if let result {
                         let text = result.bestTranscription.formattedString
                         if text != self.transcript {
@@ -133,7 +171,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             watchdogTask?.cancel()
             watchdogTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(45))
-                guard !Task.isCancelled, let self, self.armed, self.listening,
+                guard !Task.isCancelled, let self, self.armed, !self.paused, self.listening,
                       !self.processing, self.recognitionID == id else { return }
                 if self.looksLikeQuestion(self.transcript) {
                     self.queueQuestion(self.transcript)
@@ -155,7 +193,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         silenceTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .seconds(self.silenceSeconds))
-            guard !Task.isCancelled, self.armed, self.recognitionID == id,
+            guard !Task.isCancelled, self.armed, !self.paused, self.recognitionID == id,
                   self.transcript == text, self.looksLikeQuestion(text) else { return }
             self.queueQuestion(text)
         }
@@ -167,7 +205,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     }
 
     private func queueQuestion(_ question: String) {
-        guard armed && !processing && looksLikeQuestion(question) else { return }
+        guard armed && !paused && !processing && looksLikeQuestion(question) else { return }
         let normalized = question.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
         // Ignore immediate duplicate transcription callbacks, not future questions.
@@ -182,7 +220,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         responseTask?.cancel()
         responseTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, let self, self.armed, self.sessionID == currentSession else { return }
+            guard !Task.isCancelled, let self, self.armed, !self.paused, self.sessionID == currentSession else { return }
             self.pendingDelay = nil
             await self.deliverResponse(for: question, normalized: normalized, session: currentSession)
         }
@@ -191,7 +229,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     private func deliverResponse(for question: String, normalized: String, session: UUID) async {
         status = "Preparing response"
         let result = await responseEngine.respond(to: question, endpoint: serverURL)
-        guard armed && sessionID == session && !Task.isCancelled else { return }
+        guard armed && !paused && sessionID == session && !Task.isCancelled else { return }
         let limited = ResponseEngine.clean(result.words)
         guard !limited.isEmpty else {
             processing = false
@@ -208,15 +246,31 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         utterance.rate = 0.42
         utterance.pitchMultiplier = 0.72
         synthesizer.speak(utterance)
+        // AVSpeechSynthesizer completion callbacks are not guaranteed in every
+        // interruption/audio-route situation. Never let one missing callback
+        // permanently block the microphone.
+        speechRecoveryTask?.cancel()
+        speechRecoveryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled, let self, self.armed, !self.paused,
+                  self.sessionID == session else { return }
+            if self.processing {
+                if self.synthesizer.isSpeaking {
+                    self.synthesizer.stopSpeaking(at: .immediate)
+                }
+                self.processing = false
+                if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
+            }
+        }
     }
 
     func answerCurrentQuestion() async {
-        guard armed && !processing else { return }
+        guard armed && !paused && !processing else { return }
         queueQuestion(transcript)
     }
 
     func manualAnswer() async {
-        guard armed else { return }
+        guard armed && !paused else { return }
         if processing {
             // Manual override: skip the remaining delay and answer now.
             responseTask?.cancel()
@@ -234,27 +288,46 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            self.speechRecoveryTask?.cancel()
             self.processing = false
-            self.scheduleRestart(after: 0.2)
+            if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
         }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            self.speechRecoveryTask?.cancel()
             self.processing = false
-            if self.armed { self.scheduleRestart(after: 0.2) }
+            if self.armed && !self.paused { self.scheduleRestart(after: 0.4) }
+        }
+    }
+
+    private func startEngineRecoveryMonitor() {
+        engineRecoveryTask?.cancel()
+        let currentSession = sessionID
+        engineRecoveryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, let self, self.armed, !self.paused,
+                      self.sessionID == currentSession else { return }
+                // When no response is pending, no speech is playing, and
+                // recognition has stopped, re-arm the recognizer.
+                if !self.processing && !self.listening && !self.synthesizer.isSpeaking {
+                    self.scheduleRestart(after: 0.2)
+                }
+            }
         }
     }
 
     private func scheduleRestart(after delay: Double) {
         restartTask?.cancel()
-        guard armed else { return }
+        guard armed && !paused else { return }
         status = "Reconnecting microphone"
         let id = sessionID
         restartTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, let self, self.armed, self.sessionID == id else { return }
+            guard !Task.isCancelled, let self, self.armed, !self.paused, self.sessionID == id else { return }
             await self.beginListening()
         }
     }

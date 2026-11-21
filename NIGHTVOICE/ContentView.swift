@@ -57,8 +57,24 @@ struct ContentView: View {
                         }.buttonStyle(.borderedProminent).tint(.red)
                         Button { Task { await speech.manualAnswer() } } label: {
                             Text("ANSWER NOW").frame(maxWidth: .infinity).padding(.vertical, 11)
-                        }.buttonStyle(.bordered).disabled(!speech.armed)
+                        }.buttonStyle(.bordered).disabled(!speech.armed || speech.paused)
                     }
+                    Button {
+                        if speech.paused {
+                            Task { await speech.resume() }
+                        } else {
+                            speech.pause()
+                        }
+                    } label: {
+                        Label(speech.paused ? "RESUME LISTENING" : "PAUSE LISTENING",
+                              systemImage: speech.paused ? "play.fill" : "pause.fill")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(speech.paused ? .green : .gray)
+                    .disabled(!speech.armed)
+
                     VStack(alignment: .leading, spacing: 10) {
                         Text("SESSION HISTORY").font(.caption2).tracking(2).foregroundStyle(.gray)
                         if speech.history.isEmpty { Text("No responses yet").foregroundStyle(.gray) }
